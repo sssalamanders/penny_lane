@@ -32,11 +32,9 @@ if not DEBUG_MODE:
     logging.getLogger('httpx').setLevel(logging.WARNING)
 
 # ---- Ephemeral in-memory store (RAM only) ----
-owners = set()                                    # User IDs who started bot privately
-recent_groups = defaultdict(lambda: 0.0)         # {group_id: expiry_timestamp} - clearer than defaultdict(float)
-user_last_request = defaultdict(lambda: 0.0)     # {user_id: last_request_timestamp} for rate limiting
-TTL = 300           # 5 minutes in seconds
-RATE_LIMIT = 30     # 30 seconds between requests per user
+owners = set()                          # User IDs who started bot privately
+recent_groups = defaultdict(float)      # {group_id: expiry_timestamp}
+TTL = 300  # 5 minutes in seconds
 
 def encrypt_id(id_value):
     """Encrypt sensitive IDs for logging"""
@@ -45,21 +43,13 @@ def encrypt_id(id_value):
     return hash_obj.hexdigest()[:8]
 
 def prune_expired():
-    """Remove expired group records and old rate limit entries from memory."""
+    """Remove expired group records from memory."""
     now = time.time()
-    
-    # Clean expired group records
-    expired_groups = [gid for gid, exp in recent_groups.items() if exp <= now]
-    for gid in expired_groups:
+    expired = [gid for gid, exp in recent_groups.items() if exp <= now]
+    for gid in expired:
         del recent_groups[gid]
-    
-    # Clean old rate limit entries (older than 1 hour)
-    old_requests = [uid for uid, timestamp in user_last_request.items() if now - timestamp > 3600]
-    for uid in old_requests:
-        del user_last_request[uid]
-    
-    if expired_groups or old_requests:
-        logger.info(f"Pruned {len(expired_groups)} expired group records and {len(old_requests)} old rate limit entries")
+    if expired:
+        logger.info(f"Pruned {len(expired)} expired group records")
 
 async def bandaid_command(update, context):
     """Handle /bandaid command in private chats and groups."""
@@ -72,18 +62,6 @@ async def bandaid_command(update, context):
     encrypted_user_id = encrypt_id(user.id)
     encrypted_chat_id = encrypt_id(chat.id)
     logger.debug(f"Received /bandaid from user #{encrypted_user_id} in chat #{encrypted_chat_id} (type: {chat.type})")
-    
-    # Rate limiting check
-    now = time.time()
-    if now - user_last_request[user.id] < RATE_LIMIT:
-        remaining = int(RATE_LIMIT - (now - user_last_request[user.id]))
-        logger.info(f"Rate limit hit for user #{encrypted_user_id}, {remaining}s remaining")
-        await update.message.reply_text(
-            f"⏰ Please wait {remaining} seconds before using this command again."
-        )
-        return
-    
-    user_last_request[user.id] = now
     
     if chat.type == "private":
         # Register user for private notifications
@@ -117,11 +95,6 @@ async def bandaid_command(update, context):
                 return
         except Exception as e:
             logger.warning(f"Could not verify admin status for #{encrypted_user_id} in #{encrypted_chat_id}: {e}")
-            # For security, deny access if we can't verify admin status
-            await update.message.reply_text(
-                "Unable to verify admin status. Please ensure I have proper permissions."
-            )
-            return
         
         # Only send ID if we haven't already sent it recently
         if chat.id not in recent_groups:
@@ -206,11 +179,8 @@ async def help_command(update, context):
         "2. Add me as admin to your group\n"
         "3. Send /bandaid in that group\n"
         "4. I'll DM you the group ID\n\n"
-        "**Privacy & Security:**\n"
-        "• RAM-only storage (nothing saved to disk)\n"
-        "• 5-minute automatic data expiry\n"
-        "• Admin-only access verification\n"
-        "• Rate limiting (30s between requests)\n\n"
+        "**Privacy:** I only keep info in memory for 5 minutes, "
+        "then forget everything completely.\n\n"
         "**Commands:**\n"
         "/bandaid - Register privately or get group ID\n"
         "/help - Show this help message\n"
@@ -230,9 +200,7 @@ async def status_command(update, context):
         f"🎵 **Penny Lane Status**\n\n"
         f"👥 Registered owners: {len(owners)}\n"
         f"📊 Active group cache: {len(recent_groups)}\n"
-        f"⏱️ Cache TTL: {TTL} seconds\n"
-        f"🛡️ Rate limit: {RATE_LIMIT} seconds\n"
-        f"🧠 Active rate limits: {len(user_last_request)}\n\n"
+        f"⏱️ Cache TTL: {TTL} seconds\n\n"
         f"All data is stored in RAM only and automatically expires!"
     )
     
@@ -261,16 +229,6 @@ async def handle_other_messages(update, context):
             "Hey! Use /bandaid to get started, or /help for more info. 🎸"
         )
 
-async def error_handler(update, context):
-    """Handle errors gracefully without exposing sensitive information"""
-    logger.error(f"Exception while handling an update: {context.error}")
-    
-    # Don't send error details to users for security reasons
-    if update and update.effective_message:
-        await update.effective_message.reply_text(
-            "🎸 Something went wrong, but I'm still here! Try again in a moment."
-        )
-
 def run_bot(token):
     """Run the bot with the given token"""
     # Create application
@@ -290,12 +248,8 @@ def run_bot(token):
         handle_other_messages
     ))
     
-    # Add error handler
-    application.add_error_handler(error_handler)
-    
     logger.info("🎸 Penny Lane is starting up...")
     logger.info("🔒 Privacy mode: RAM-only storage with 5-minute expiry")
-    logger.info("🛡️ Security: Rate limiting and enhanced validation enabled")
     logger.info("📡 Bot is now polling for updates...")
     
     try:

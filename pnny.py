@@ -42,6 +42,34 @@ def activate_venv():
         print(f"❌ Site-packages not found at: {site_packages_path}")
         return False
 
+def validate_bot_token(token):
+    """Validate bot token format for security"""
+    if not token or not isinstance(token, str):
+        return False
+    
+    # Basic format validation for Telegram bot tokens
+    if ':' not in token:
+        return False
+        
+    parts = token.split(':')
+    if len(parts) != 2:
+        return False
+    
+    # First part should be bot ID (numeric)
+    bot_id, auth_token = parts
+    if not bot_id.isdigit() or len(bot_id) < 8:
+        return False
+        
+    # Second part should be auth token (alphanumeric + some special chars)
+    if len(auth_token) < 20:
+        return False
+    
+    # Bot IDs typically start with certain digits
+#    if not bot_id.startswith(('1', '2', '5', '6', '7')):
+ #       return False
+        
+    return True
+
 def first_time_setup():
     """Handle first-time setup: venv, dependencies, token"""
     print("🎸 Penny Lane First-Time Setup")
@@ -97,17 +125,20 @@ def first_time_setup():
         
         if token:
             print("✅ Bot token found in environment variables")
-            # Validate token format
-            if ":" not in token or len(token) < 20:
-                print("❌ Invalid token format in environment variable")
+            # Enhanced token validation
+            if not validate_bot_token(token):
+                print("❌ Invalid bot token format in environment variable")
+                print("   Token should be in format: BOTID:AUTH_TOKEN")
                 return False
+            print("✅ Token format validated")
         else:
             # Check if we're in an interactive environment
             if not sys.stdin.isatty():
                 print("❌ No interactive terminal available and no PENNY_BOT_TOKEN environment variable set")
                 print("For Railway/Docker deployments:")
                 print("1. Set PENNY_BOT_TOKEN environment variable in your Railway dashboard")
-                print("2. Or run locally with: export PENNY_BOT_TOKEN=your_token_here")
+                print("2. Mark it as a 'secret' variable (lock icon)")
+                print("3. Or run locally with: export PENNY_BOT_TOKEN=your_token_here")
                 return False
             
             # Interactive mode - prompt for token
@@ -120,11 +151,13 @@ def first_time_setup():
             while True:
                 try:
                     token = getpass.getpass("🔐 Paste token (hidden): ").strip()
-                    if not token or ":" not in token or len(token) < 20:
-                        print("Invalid token format. Try again.")
+                    
+                    if not validate_bot_token(token):
+                        print("❌ Invalid token format. Token should look like: 123456789:ABCdefGHI...")
+                        print("Try again or press Ctrl+C to cancel.")
                         continue
                         
-                    masked = f"{token[:8]}...{token[-8:]}"
+                    masked = f"{token[:12]}...{token[-8:]}"
                     print(f"Token preview: {masked}")
                     confirm = input("Save this token? (Y/n): ").lower()
                     
@@ -134,6 +167,9 @@ def first_time_setup():
                 except KeyboardInterrupt:
                     print("\nSetup cancelled")
                     return False
+                except Exception as e:
+                    print(f"❌ Error during token input: {e}")
+                    return False
         
         # Save token to .env file (if we got it interactively)
         if not os.environ.get("PENNY_BOT_TOKEN"):
@@ -141,8 +177,8 @@ def first_time_setup():
                 with open(".env", "w") as f:
                     f.write(f"PENNY_BOT_TOKEN={token}\n")
                     f.write("PENNY_DEBUG=false\n")
-                os.chmod(".env", 0o600)
-                print("✅ Token saved securely")
+                os.chmod(".env", 0o600)  # Secure file permissions
+                print("✅ Token saved securely with restricted permissions")
             except Exception as e:
                 print(f"❌ Failed to save token: {e}")
                 return False
@@ -151,6 +187,7 @@ def first_time_setup():
             try:
                 with open(".env", "w") as f:
                     f.write("PENNY_DEBUG=false\n")
+                os.chmod(".env", 0o600)
                 print("✅ Configuration initialized")
             except Exception as e:
                 print(f"⚠️  Warning: Could not create .env file: {e}")
@@ -174,19 +211,23 @@ def self_check():
     # Load and check token
     token = os.getenv("PENNY_BOT_TOKEN")
     if not token:
-        with open(env_file) as f:
-            for line in f:
-                if line.startswith("PENNY_BOT_TOKEN="):
-                    token = line.split("=", 1)[1].strip()
-                    os.environ["PENNY_BOT_TOKEN"] = token
-                    break
+        try:
+            with open(env_file) as f:
+                for line in f:
+                    if line.startswith("PENNY_BOT_TOKEN="):
+                        token = line.split("=", 1)[1].strip()
+                        os.environ["PENNY_BOT_TOKEN"] = token
+                        break
+        except Exception as e:
+            print(f"❌ Error reading .env file: {e}")
+            return False
     
-    if not token or ":" not in token:
-        print("❌ Bot token not configured")
+    if not validate_bot_token(token):
+        print("❌ Bot token not configured or invalid format")
         return False
     
-    masked = f"{token[:8]}...{token[-8:]}"
-    print(f"✅ Bot token configured: {masked}")
+    masked = f"{token[:12]}...{token[-8:]}"
+    print(f"✅ Bot token configured and validated: {masked}")
     
     # Check imports (only after venv is activated)
     try:
@@ -242,12 +283,15 @@ def main():
     
     # Load environment variables
     if env_file.exists():
-        with open(env_file) as f:
-            for line in f:
-                line = line.strip()
-                if line and '=' in line and not line.startswith('#'):
-                    key, value = line.split('=', 1)
-                    os.environ[key] = value
+        try:
+            with open(env_file) as f:
+                for line in f:
+                    line = line.strip()
+                    if line and '=' in line and not line.startswith('#'):
+                        key, value = line.split('=', 1)
+                        os.environ[key] = value
+        except Exception as e:
+            print(f"⚠️  Warning: Error reading .env file: {e}")
     
     # Self-check mode
     if check_mode:
@@ -256,10 +300,10 @@ def main():
             return 1
         print()
     
-    # Verify token is available
+    # Verify token is available and valid
     token = os.getenv("PENNY_BOT_TOKEN")
-    if not token or token == "YOUR_BOT_TOKEN_HERE":
-        print("❌ Bot token not configured")
+    if not validate_bot_token(token):
+        print("❌ Bot token not configured or invalid")
         print("   Run: python pnny.py --setup")
         return 1
     
