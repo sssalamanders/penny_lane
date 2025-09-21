@@ -87,44 +87,73 @@ def first_time_setup():
         print("❌ Failed to install requirements")
         return False
     
-    # Get bot token
+    # Get bot token - Check environment variable first
     env_file = Path(".env")
     if not env_file.exists():
         print("\n🔑 Bot Token Setup")
-        print("Get your token from @BotFather:")
-        print("1. Message @BotFather on Telegram")
-        print("2. Send: /newbot")
-        print("3. Follow prompts")
-        print("4. Copy the token")
         
-        while True:
-            try:
-                token = getpass.getpass("🔐 Paste token (hidden): ").strip()
-                if not token or ":" not in token or len(token) < 20:
-                    print("Invalid token format. Try again.")
-                    continue
-                    
-                masked = f"{token[:8]}...{token[-8:]}"
-                print(f"Token preview: {masked}")
-                confirm = input("Save this token? (Y/n): ").lower()
-                
-                if confirm in ('', 'y', 'yes'):
-                    break
-                    
-            except KeyboardInterrupt:
-                print("\nSetup cancelled")
+        # First, check if token is available via environment variable (for Railway/Docker)
+        token = os.environ.get("PENNY_BOT_TOKEN")
+        
+        if token:
+            print("✅ Bot token found in environment variables")
+            # Validate token format
+            if ":" not in token or len(token) < 20:
+                print("❌ Invalid token format in environment variable")
                 return False
+        else:
+            # Check if we're in an interactive environment
+            if not sys.stdin.isatty():
+                print("❌ No interactive terminal available and no PENNY_BOT_TOKEN environment variable set")
+                print("For Railway/Docker deployments:")
+                print("1. Set PENNY_BOT_TOKEN environment variable in your Railway dashboard")
+                print("2. Or run locally with: export PENNY_BOT_TOKEN=your_token_here")
+                return False
+            
+            # Interactive mode - prompt for token
+            print("Get your token from @BotFather:")
+            print("1. Message @BotFather on Telegram")
+            print("2. Send: /newbot")
+            print("3. Follow prompts")
+            print("4. Copy the token")
+            
+            while True:
+                try:
+                    token = getpass.getpass("🔐 Paste token (hidden): ").strip()
+                    if not token or ":" not in token or len(token) < 20:
+                        print("Invalid token format. Try again.")
+                        continue
+                        
+                    masked = f"{token[:8]}...{token[-8:]}"
+                    print(f"Token preview: {masked}")
+                    confirm = input("Save this token? (Y/n): ").lower()
+                    
+                    if confirm in ('', 'y', 'yes'):
+                        break
+                        
+                except KeyboardInterrupt:
+                    print("\nSetup cancelled")
+                    return False
         
-        # Save token
-        try:
-            with open(".env", "w") as f:
-                f.write(f"PENNY_BOT_TOKEN={token}\n")
-                f.write("PENNY_DEBUG=false\n")
-            os.chmod(".env", 0o600)
-            print("✅ Token saved securely")
-        except Exception as e:
-            print(f"❌ Failed to save token: {e}")
-            return False
+        # Save token to .env file (if we got it interactively)
+        if not os.environ.get("PENNY_BOT_TOKEN"):
+            try:
+                with open(".env", "w") as f:
+                    f.write(f"PENNY_BOT_TOKEN={token}\n")
+                    f.write("PENNY_DEBUG=false\n")
+                os.chmod(".env", 0o600)
+                print("✅ Token saved securely")
+            except Exception as e:
+                print(f"❌ Failed to save token: {e}")
+                return False
+        else:
+            # For environment variable case, create a minimal .env for consistency
+            try:
+                with open(".env", "w") as f:
+                    f.write("PENNY_DEBUG=false\n")
+                print("✅ Configuration initialized")
+            except Exception as e:
+                print(f"⚠️  Warning: Could not create .env file: {e}")
     
     print("\n🎉 Setup complete!")
     print("Test: Message your bot /bandaid privately, then /bandaid in groups")
